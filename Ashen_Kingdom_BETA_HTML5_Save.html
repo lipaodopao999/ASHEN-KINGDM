@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ashen Kingdom — Beta</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#090b10;color:#eee8d5;font-family:monospace;display:flex;justify-content:center}
+#game{width:min(950px,100%);padding:20px}.box{background:#11151e;border:2px solid #454d63;padding:18px;margin-bottom:12px}
+h1{color:#d5ae62;text-align:center;letter-spacing:5px}.subtitle{text-align:center;color:#9ca4b8}
+button{font:700 15px monospace;background:#1b2130;color:#eee8d5;border:2px solid #59637d;padding:10px 14px;margin:4px;cursor:pointer}
+button:hover{border-color:#d5ae62}.danger{border-color:#9d5151}.gold{color:#d5ae62}
+#story{white-space:pre-wrap;line-height:1.65;min-height:230px}
+#status{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.stat{background:#0b0e15;padding:10px;border:1px solid #303749}
+#choices{display:flex;flex-wrap:wrap;gap:5px}.hidden{display:none}
+.bar{height:10px;background:#08090d;border:1px solid #303749;margin-top:4px}.fill{height:100%}.hp{background:#b84d4d}.mp{background:#5579c8}
+.small{font-size:12px;color:#9ca4b8}.log{height:100px;overflow:auto;border:1px solid #303749;padding:8px;line-height:1.4}
+@media(max-width:700px){#status{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div id="game">
+<div class="box">
+<h1>ASHEN KINGDOM</h1>
+<div class="subtitle">BETA — RPG DE TEXTO</div>
+</div>
+
+<div id="status" class="box">
+<div class="stat">❤️ Vida<br><b id="hpText">100/100</b><div class="bar"><div id="hp" class="fill hp"></div></div></div>
+<div class="stat">💙 Mana<br><b id="mpText">100/100</b><div class="bar"><div id="mp" class="fill mp"></div></div></div>
+<div class="stat">🪙 Ouro<br><b id="gold">50</b></div>
+<div class="stat">🧪 Poções<br><b id="pots">2</b></div>
+<div class="stat">👀 Desconfiança<br><b id="sus">0/100</b></div>
+</div>
+
+<div class="box">
+<div id="story"></div>
+<div id="choices"></div>
+</div>
+
+<div id="combat" class="box hidden">
+<b class="gold">⚔ COMBATE</b><br><br>
+<button onclick="attack()">⚔ Atacar</button>
+<button onclick="guaranteed()">🎯 Acerto garantido</button>
+<button onclick="defend()">🛡 Defender</button>
+<button onclick="potion()">🧪 Poção</button>
+<button id="magicBtn" class="hidden" onclick="magic()">✨ Magia</button>
+<div id="enemyInfo"></div>
+</div>
+
+<div class="box">
+<button onclick="saveGame()">💾 Salvar</button>
+<button onclick="loadGame()">📂 Carregar</button>
+<button onclick="newGame()" class="danger">↻ Novo jogo</button>
+<div class="small">O save fica salvo no navegador deste dispositivo usando LocalStorage.</div>
+</div>
+
+<div class="box">
+<b>LOG</b>
+<div id="log" class="log"></div>
+</div>
+</div>
+
+<script>
+const defaultState={
+ name:"",age:18,className:"Guerreiro",attack:15,hp:100,mana:100,gold:50,pots:2,
+ suspicion:0,magicAwakened:false,blackBook:false,darkMagic:false,
+ scene:"start",choice:"",enemy:null,gameOver:false
+};
+let s=JSON.parse(JSON.stringify(defaultState));
+
+function $(id){return document.getElementById(id)}
+function story(t){$("story").textContent=t}
+function clearChoices(){$("choices").innerHTML=""}
+function choice(text,fn){let b=document.createElement("button");b.textContent=text;b.onclick=fn;$("choices").appendChild(b)}
+function log(t){$("log").innerHTML+=t+"<br>";$("log").scrollTop=$("log").scrollHeight}
+function pauseText(){}
+function update(){
+ $("hpText").textContent=s.hp+"/100";$("mpText").textContent=s.mana+"/100";
+ $("hp").style.width=Math.max(0,s.hp)+"%";$("mp").style.width=Math.max(0,s.mana)+"%";
+ $("gold").textContent=s.gold;$("pots").textContent=s.pots;$("sus").textContent=s.suspicion+"/100";
+ $("magicBtn").classList.toggle("hidden",!s.magicAwakened);
+ if(s.enemy) $("enemyInfo").innerHTML="<br>👹 "+s.enemy.name+" — Vida: "+Math.max(0,s.enemy.hp)+"/"+s.enemy.max;
+ else $("enemyInfo").innerHTML="";
+}
+function saveGame(){
+ localStorage.setItem("ashenKingdomSave",JSON.stringify(s));
+ log("💾 Jogo salvo com sucesso.");
+}
+function loadGame(){
+ let data=localStorage.getItem("ashenKingdomSave");
+ if(!data){log("Nenhum save encontrado.");return}
+ s=JSON.parse(data);update();renderScene();log("📂 Save carregado.");
+}
+function newGame(){
+ if(confirm("Começar um novo jogo? O save atual continuará guardado até você salvar o novo.")){
+   s=JSON.parse(JSON.stringify(defaultState));start();
+ }
+}
+function setSus(n){s.suspicion=Math.max(0,Math.min(100,s.suspicion+n))}
+function combat(name,hp,dmg,after){
+ s.enemy={name:name,hp:hp,max:hp,dmg:dmg};s.afterCombat=after;
+ $("combat").classList.remove("hidden");renderCombat();update();
+}
+function renderCombat(){story("A batalha começou.\n\nEscolha sua ação.\n\nVocê ainda não despertou sua magia.");clearChoices();update()}
+function enemyTurn(){
+ if(!s.enemy)return;
+ if(Math.random()<.12){log("👹 "+s.enemy.name+" errou o ataque!");return}
+ let dmg=s.enemy.dmg+Math.floor(Math.random()*4);
+ if(s.defending){dmg=Math.max(1,Math.floor(dmg/2));s.defending=false}
+ s.hp-=dmg;log("👹 "+s.enemy.name+" causou "+dmg+" de dano.");
+ if(s.hp<=0){s.hp=0;s.gameOver=true;s.enemy=null;$("combat").classList.add("hidden");story("💀 GAME OVER\n\nVocê foi derrotado.\n\nSua jornada termina aqui.");clearChoices();choice("↻ Recomeçar",()=>{s=JSON.parse(JSON.stringify(defaultState));start()});update()}
+}
+function checkEnemy(){
+ if(s.enemy&&s.enemy.hp<=0){
+   let fn=s.afterCombat;s.enemy=null;s.gold+=15;$("combat").classList.add("hidden");log("⚔ Inimigo derrotado! +15 ouro.");
+   update();fn();
+ }
+}
+function attack(){
+ if(!s.enemy)return;
+ if(Math.random()<.12){log("Você errou o ataque!");enemyTurn();return}
+ let dmg=s.attack+Math.floor(Math.random()*11);
+ if(Math.random()<.18){dmg*=2;log("💥 ACERTO CRÍTICO!")}
+ s.enemy.hp-=dmg;log("Você causou "+dmg+" de dano.");checkEnemy();if(s.enemy)enemyTurn();update()
+}
+function guaranteed(){
+ if(!s.enemy)return;s.enemy.hp-=s.attack;log("🎯 ACERTO GARANTIDO! "+s.attack+" de dano.");checkEnemy();if(s.enemy)enemyTurn();update()
+}
+function defend(){if(!s.enemy)return;s.defending=true;log("🛡 Você se defendeu.");enemyTurn();update()}
+function potion(){
+ if(s.pots<=0){log("Você não possui poções.");return}
+ if(s.hp>=100){log("Sua vida já está cheia.");return}
+ s.pots--;s.hp=Math.min(100,s.hp+30);log("🧪 Você recuperou 30 de vida.");if(s.enemy)enemyTurn();update()
+}
+function magic(){
+ if(!s.magicAwakened){log("Sua magia ainda está adormecida.");return}
+ if(s.mana<20){log("Mana insuficiente.");return}
+ if(!s.enemy)return;s.mana-=20;let d=30+Math.floor(Math.random()*21);s.enemy.hp-=d;log("✨ Sua magia causou "+d+" de dano.");checkEnemy();if(s.enemy)enemyTurn();update()
+}
+
+function start(){
+ story("BEM-VINDO A ASHEN KINGDOM\n\nVocê acorda em uma estrada desconhecida.\n\nNão se lembra de como chegou ali.\n\nAntes que consiga entender o que está acontecendo, uma criatura surge entre as árvores.\n\nUm homem aparece atrás de você.\n\nDAEYL: \"Se quer continuar vivo, terá que lutar.\"");
+ clearChoices();choice("CONTINUAR",tutorialSetup);update()
+}
+function tutorialSetup(){
+ let n=prompt("Nome do personagem:");s.name=n||"Ashen";
+ let a=prompt("Idade do personagem:","18");s.age=parseInt(a)||18;
+ let c=prompt("Classe:\n1 - Guerreiro\n2 - Mago\n3 - Arqueiro\n4 - Mago Renegado","1");
+ if(c==="2"){s.className="Mago";s.attack=12}
+ else if(c==="3"){s.className="Arqueiro";s.attack=14}
+ else if(c==="4"){s.className="Mago Renegado";s.attack=12}
+ else{s.className="Guerreiro";s.attack=15}
+ combat("Criatura Ferida",55,7,tutorialEnd)
+}
+function tutorialEnd(){
+ story("DAEYL: \"Você o derrotou.\"\n\nDAEYL: \"Venha com a gente. Vamos levar você para a vila.\"\n\nVocê olha para Daeyl. Ainda não sabe se pode confiar nele.");
+ clearChoices();choice("Y — IR COM ELES",yesPath);choice("N — NÃO IR COM ELES",noPath)
+}
+function yesPath(){
+ s.choice="y";story("Você decidiu acompanhar Daeyl e os outros até a vila.\n\nDurante o caminho, Daeyl olha para você algumas vezes.\n\nQuando você olha de volta, ele desvia o olhar.\n\nVocê decide não pensar muito nisso.\n\nAinda.");
+ setSus(1);clearChoices();choice("CONTINUAR ATÉ A VILA",village)
+}
+function noPath(){
+ s.choice="n";story("Você recusou a ajuda.\n\nDAEYL: \"Então fica aí, seu ingrato.\"\n\nDaeyl e os outros vão embora.\n\nVocê fica sozinho no chão.\n\nDe repente, ouve um barulho atrás das árvores.");
+ clearChoices();choice("CONTINUAR",()=>combat("Criatura da Mentira",40,7,noEnd))
+}
+function noEnd(){
+ story("A criatura cai.\n\nVocê olha para o caminho por onde Daeyl foi embora.\n\nTalvez tenha cometido um erro.\n\nMas ainda não confia nele.\n\nDesconfiança +1.");
+ setSus(1);clearChoices();choice("CONTINUAR",mountainIntro)
+}
+function village(){
+ story("CAPÍTULO 2 — A VILA DE ASHEN\n\nDepois de algum tempo, vocês chegam à vila.\n\nAs casas são antigas. As pessoas observam você em silêncio.\n\nDAEYL: \"Aqui você estará seguro.\"");
+ clearChoices();
+ choice("🛒 LOJA",shop);choice("🍺 TAVERNA",tavern);choice("🏚 DISTRITO ANTIGO",district);
+ choice("👤 CONVERSAR COM DAEYL",talkDaeyl);choice("➡ CONTINUAR HISTÓRIA",night)
+}
+function shop(){
+ story("LOJA DA VILA\n\nUma pequena loja vende suprimentos.");
+ clearChoices();
+ choice("COMPRAR POÇÃO — 15 OURO",()=>{if(s.gold>=15){s.gold-=15;s.pots++;log("🧪 Poção comprada.");}else log("Ouro insuficiente.");update()});
+ choice("VOLTAR",village)
+}
+function tavern(){
+ setSus(2);story("TAVERNA\n\nVocê entra e escuta algumas pessoas falando sobre Daeyl.\n\nQuando percebem que você está ouvindo, todos ficam em silêncio.\n\nAlgo não parece certo.\n\nDESCONFIANÇA +2.");
+ clearChoices();choice("VOLTAR",village);update()
+}
+function district(){
+ setSus(3);story("DISTRITO ANTIGO\n\nVocê encontra uma construção abandonada.\n\nNa porta existe um símbolo estranho.\n\nVocê sente que existe algo escondido ali, mas ainda não consegue entrar.\n\nDESCONFIANÇA +3.");
+ clearChoices();choice("VOLTAR",village);update()
+}
+function talkDaeyl(){
+ setSus(1);story("DAEYL: \"Está tudo bem? Você parece preocupado.\"\n\nVocê observa Daeyl.\n\nEle parece sincero...\n\nOu talvez seja muito bom em esconder alguma coisa.\n\nDESCONFIANÇA +1.");
+ clearChoices();choice("VOLTAR",village);update()
+}
+function night(){
+ setSus(3);story("UMA NOITE ESTRANHA\n\nVocê acorda com vozes do lado de fora.\n\nPela janela, vê Daeyl conversando com alguém na escuridão.\n\nVocê não consegue ouvir tudo.\n\nQuando Daeyl percebe você, a conversa termina.\n\nDAEYL: \"Você deveria estar dormindo.\"\n\nEle vai embora.\n\nVocê não sabe o que aquela conversa significava.\n\nDESCONFIANÇA +3.");
+ clearChoices();choice("CONTINUAR",mountainIntro);update()
+}
+function mountainIntro(){
+ story("CAPÍTULO 3 — AS MONTANHAS\n\nNa manhã seguinte, você parte em direção às montanhas.\n\nO caminho fica cada vez mais silencioso.\n\nEntre a névoa, surgem ruínas antigas.\n\nUma criatura protege a entrada.\n\nVocê sente que existe algo muito maior escondido naquele lugar.");
+ clearChoices();choice("ENFRENTAR O GUARDIÃO",()=>combat("Guardião das Ruínas",90,11,betaEnd))
+}
+function betaEnd(){
+ story("O Guardião cai.\n\nAs ruínas ficam completamente silenciosas.\n\nUma energia estranha pulsa dentro da passagem.\n\nVocê sente que alguma coisa está esperando por você.\n\nMas sua magia continua adormecida.\n\nVocê ainda não sabe do que é capaz.\n\n\n=== FIM DA BETA ===\n\nA história de Ashen Kingdom está apenas começando.\n\nDaeyl continua sendo um mistério.\n\nA desconfiança continuará aumentando conforme a história avançar.\n\nO Despertar acontecerá somente em um evento futuro importante.\n\n\"O jogo recebe updates aos sábados e domingos. Para ficar ligado, entre no nosso server do Discord.\"");
+ clearChoices();choice("💾 SALVAR BETA",()=>{saveGame();log("Beta salva.");});choice("JOGAR NOVAMENTE",()=>{s=JSON.parse(JSON.stringify(defaultState));start()})
+}
+function renderScene(){
+ $("combat").classList.toggle("hidden",!s.enemy);
+ if(s.enemy){renderCombat();return}
+ if(s.scene==="start")start();else story("Save carregado.\n\nContinue sua jornada.");
+}
+start();
+update();
+</script>
+</body>
+</html>
